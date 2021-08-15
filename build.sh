@@ -134,8 +134,8 @@ if [ ! "$(curl -o /dev/null -s -w "%{http_code}\n" $PYPI_INDEX_URL)" -lt 400 ]; 
 fi
 
 info "init env"
-if apt-get -v &> /dev/null; then
-    apt-get install -y -q libmysqlclient-dev rsync
+if apt -v &> /dev/null; then
+    apt install -y -q libmysqlclient-dev rsync
 elif which yum &> /dev/null; then
     yum install -y -q mysql-devel gcc gcc-devel python-devel rsync
 fi
