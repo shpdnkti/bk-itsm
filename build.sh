@@ -133,6 +133,13 @@ if [ ! "$(curl -o /dev/null -s -w "%{http_code}\n" $PYPI_INDEX_URL)" -lt 400 ]; 
     err "--pypi-index-url: $PYPI_INDEX_URL 无法访问"
 fi
 
+info "init env"
+if apt-get -v &> /dev/null; then
+    apt-get install -y -q libmysqlclient-dev rsync
+elif which yum &> /dev/null; then
+    yum install -y -q mysql-devel gcc gcc-devel python-devel rsync
+fi
+
 info "Start running. work dir: $WORK_DIR"
 FILE_MIMETYPE=$(file -Lb --mime-type $FILE_SOURCE)
 case "X${FILE_MIMETYPE##*[/.-]}" in
@@ -311,14 +318,6 @@ fi
 # else
 #     err "can not find ant conf home"
 # fi
-
-info "init env"
-if apt-get -v &> /dev/null; then
-    apt-get install -y -q libmysqlclient-dev
-elif which yum &> /dev/null; then
-    :
-    #yum install -y -q mysql-devel gcc gcc-devel python-devel
-fi
 
 info "build saas"
 mv $PROJECT_HOME $WORK_DIR/src
