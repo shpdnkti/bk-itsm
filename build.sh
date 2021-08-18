@@ -8,7 +8,8 @@ $0 -s source -d dest -t [0|1|2] -U user-codes [-c] [-h]
 Flags:
     -s, --source                 [必填] 源码，支持zip/tgz/源码目录
     -d, --dest                   [必填] 输出路径
-    --saas-version               [可选] saas 版本号
+    --app-code                   [可选] app code
+    --app-version                [可选] saas 版本号
     --do-not-download-pkgs       [可选] 是否补全 python 依赖库
     --pypi-index-url             [可选] pypi index url 
     --python2-home               [可选] python2 路径
@@ -23,9 +24,7 @@ IS_TRACE=${IS_TRACE:-false}
 [[ "$IS_TRACE" == "true" ]] && set -x
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
-#LOG_LEVEL=3 [INFO:0, WARNING:1, ERROR:2, FATAL:3]
-LOG_FILE=/var/log/build_saas-$(date +%F-%s).log
-LOG_LEVEL=${LOG_LEVEL:-1}
+LOG_FILE=/var/log/$0-$(date +%F-%s).log
 
 exec 2> >(trap '' INT; tee -a $LOG_FILE >&2)
 trap '>&2 ec=$?; (( ec != 0 )) && echo "[ERROR $(date +%F/%T) $BASH_LINENO] Exited with failure: $ec"; exit $ec' EXIT
@@ -40,7 +39,7 @@ parse_yaml () {
     local prefix=$2
     local s='[[:space:]]*' w='[a-zA-Z0-9_]*' fs=$(echo @|tr @ '\034')
     sed -ne "s|^\($s\)\($w\)$s:$s\"\(.*\)\"$s\$|\1$fs\2$fs\3|p" \
-        -e "s|^\($s\)\($w\)$s:$s\(.*\)$s\$|\1$fs\2$fs\3|p"  $1 |
+        -e "s|^\($s\)\($w\)$s:$s\(.*\)$s\$|\1$fs\2$fs\3|p" $1 |
     awk -F$fs '{
         indent = length($1)/2;
         vname[indent] = $2;
@@ -58,9 +57,9 @@ IS_DOWNLOAD_PKGS=1
 APP_CODE=''
 ARG_NUM=$#
 [[ $ARG_NUM == 0 ]] && usage
-TEMP=$( getopt -o s:d:h --long help,source:,dest:,pypi-index-url:,do-not-download-pkgs,python2-home:,python3-home:,app-code:,saas-version: -- "$@" 2>/dev/null )
+TEMP=$( getopt -o s:d:h --long help,source:,dest:,pypi-index-url:,do-not-download-pkgs,python2-home:,python3-home:,app-code:,app-version: -- "$@" 2>/dev/null )
 if [ $? != 0 ]; then
-    fail "unknown argument!"
+    fail "Unknown argument!"
     usage
 fi
 eval set -- "${TEMP}"
@@ -79,7 +78,7 @@ while :; do
             APP_CODE=$2
             shift 2
         ;;    
-        --saas-version)
+        --app-version)
             RELEASE_VERSION=$2
             shift 2
         ;;
@@ -104,7 +103,7 @@ while :; do
             shift
         ;;
         --) shift ;;
-        *) fail "unkonw argument!"; usage ;;
+        *) fail "Unkonw argument!"; usage ;;
     esac
 done
 
@@ -120,20 +119,15 @@ else
     fi
 fi
 
-if [ ! -d "$FILE_OUTPUT" ]; then
-    fail '-d|--dest 目录不存在，创建中'
-    mkdir -p $FILE_OUTPUT
-fi
-
 if [ "$RELEASE_VERSION" == '' ]; then
-    err "版本号为空"
+    err "--app-version: 版本号为空"
 fi
 
 if [ ! "$(curl -o /dev/null -s -w "%{http_code}\n" $PYPI_INDEX_URL)" -lt 400 ]; then
     err "--pypi-index-url: $PYPI_INDEX_URL 无法访问"
 fi
 
-info "init env"
+info "Install dependencies"
 if apt-get -v &> /dev/null; then
     apt-get update
     apt-get install -y -q libmysqlclient-dev rsync
@@ -145,15 +139,15 @@ info "Start running. work dir: $WORK_DIR"
 FILE_MIMETYPE=$(file -Lb --mime-type $FILE_SOURCE)
 case "X${FILE_MIMETYPE##*[/.-]}" in
     Xgzip)
-        info "extract $FILE_SOURCE"
+        info "Extract $FILE_SOURCE"
         tar xf $FILE_SOURCE -C $WORK_DIR
     ;;
     Xzip)
-        info "extract $FILE_SOURCE"
+        info "Extract $FILE_SOURCE"
         unzip -q $FILE_SOURCE -d $WORK_DIR
     ;;
     Xdirectory)
-        info "copy source to work dir"
+        info "Copy source to work dir"
         [ -z "$APP_CODE" ] && err 'source 为目录时需要指定 --app-code'
         rsync_args=''
         if [ -f $FILE_SOURCE/.gitignore ]; then
@@ -161,10 +155,10 @@ case "X${FILE_MIMETYPE##*[/.-]}" in
         fi
         rsync -a ${rsync_args} --exclude '.git*' --exclude 'build.sh' $FILE_SOURCE $WORK_DIR/${APP_CODE}
     ;;
-    *) err "unknow mime-type: ${FILE_MIMETYPE}"
+    *) err "Unknow mime-type: ${FILE_MIMETYPE}"
 esac
 
-info "excute precheck items"
+info "Execute precheck items"
 if [ "$(find $WORK_DIR -maxdepth 2 -type f -name 'app.yml' | wc -l)" -eq 1 ]; then
     yaml_string=$(parse_yaml $(find $WORK_DIR -maxdepth 2 -type f -name 'app.yml'))
     eval "$yaml_string"
@@ -213,7 +207,7 @@ if [ -f $PROJECT_HOME/runtime.txt ]; then
             PYTHON_PATH=${PYTHON2_PATH}
             PIP_PATH="${PYTHON2_PATH%/*}/pip"
         ;;
-        *) err "python 版本无法识别：$(cat $PROJECT_HOME/runtime.txt)"
+        *) err "Python 版本无法识别：$(cat $PROJECT_HOME/runtime.txt)"
     esac
     info "runtime: $(cat $PROJECT_HOME/runtime.txt)"
 else
@@ -225,18 +219,18 @@ else
 fi
 
 if [ ! -e "$PYTHON_PATH" ]; then
-    err "python 路径不存在"
+    err "Python 路径不存在"
 fi
 
-info "rewrite app.yml"
-#$PYTHON_PATH $SCRIPT_DIR/validate_and_rewrite_app_yml.py $PROJECT_HOME | logstd \
-#    || err "validate / rewrite app.yml fail"
+info "Rewrite app.yml"
+# $PYTHON_PATH $SCRIPT_DIR/validate_and_rewrite_app_yml.py $PROJECT_HOME | logstd \
+#     || err "validate / rewrite app.yml fail"
 sed -i -r "s/^(version:).*/\1 ${APP_VERSION}/" $PROJECT_HOME/app.yml
 echo 'libraries:' >> $PROJECT_HOME/app.yml
 cat $PROJECT_HOME/requirements.txt | grep -vE '^#|^$' | xargs -n1 \
     | awk -F'==' '{printf "- name: %s\n  version: %s\n",$1,$2}' >> $PROJECT_HOME/app.yml
 
-info "sync settings templates"
+info "Sync settings templates"
 if [ -f "$PROJECT_HOME/settings.py" ]; then
     cat >>$PROJECT_HOME/settings.py<<EOF
 # check saas app  settings
@@ -311,16 +305,37 @@ except Exception:
     pass
 EOF
 fi
+    cat >>$WORK_DIR/settings_saas.py<<_EOF
+# -*- coding: utf-8 -*-
+"""
+SaaS上传部署的全局配置
+"""
+import os
 
-# if [ -d "$PROJECT_HOME/conf" ]; then
-#     cp $SCRIPT_DIR/tpls/settings_saas.py $PROJECT_HOME/conf/
-# elif [ -d "$PROJECT_HOME/config" ]; then
-#     cp $SCRIPT_DIR/tpls/settings_saas.py $PROJECT_HOME/config/
-# else
-#     err "can not find ant conf home"
-# fi
+# ===============================================================================
+# 数据库设置, 正式环境数据库设置
+# ===============================================================================
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': os.environ.get('DB_NAME'),
+        'USER': os.environ.get('DB_USERNAME'),
+        'PASSWORD': os.environ.get('DB_PASSWORD'),
+        'HOST': os.environ.get('DB_HOST'),
+        'PORT': os.environ.get('DB_PORT'),
+    },
+}
+_EOF
 
-info "build saas"
+if [ -d "$PROJECT_HOME/conf" ]; then
+    cp $WORK_DIR/settings_saas.py $PROJECT_HOME/conf/
+elif [ -d "$PROJECT_HOME/config" ]; then
+    cp $WORK_DIR/settings_saas.py $PROJECT_HOME/config/
+else
+    err "can not find ant conf home"
+fi
+
+info "Building saas"
 mv $PROJECT_HOME $WORK_DIR/src
 mkdir $WORK_DIR/$APP_CODE
 mv $WORK_DIR/src $WORK_DIR/$APP_CODE
@@ -332,9 +347,9 @@ if [ -f "$WORK_DIR/includefiles" ]; then
     rm -f $WORK_DIR/includefiles
 fi
 
-info "upgrade / downgrade pip version to 20.2.3"
+info "Upgrade / downgrade pip version to 20.2.3"
 ${PIP_PATH} install pip==20.2.3 | logstd 
-info "pip download libraries"
+info "Download libraries"
 if [ "$IS_DOWNLOAD_PKGS" == '1' ]; then
     ${PIP_PATH} download \
         --index-url ${PYPI_INDEX_URL} \
@@ -353,12 +368,17 @@ else
 fi
 
 mkdir -p $WORK_DIR/dist
+# export IS_DOWNLOAD_PKGS
+# $PYTHON3_PATH $SCRIPT_DIR/make_package.py $WORK_DIR/$APP_CODE $WORK_DIR/dist ${RELEASE_VERSION} ${PYTHON_PATH} ${PYPI_INDEX_URL} | logstd \
+#     || err "build saas fail"
 cd $WORK_DIR
 PKG_NAME="${APP_CODE}_V${APP_VERSION}.tar.gz"
-tar czf $WORK_DIR/dist/${PKG_NAME} ${APP_CODE} || err 'packing fail'
+tar --owner=0 --group=0 -czf $WORK_DIR/dist/${PKG_NAME} ${APP_CODE} || err 'packing fail'
 
-info "sync file to dest path: $FILE_OUTPUT/"
-rsync -av --delete $WORK_DIR/dist/${PKG_NAME} $FILE_OUTPUT/
+info "Sync file to dest path: $FILE_OUTPUT"
+mkdir -p $FILE_OUTPUT
+rsync -av --delete $WORK_DIR/dist/${PKG_NAME} $FILE_OUTPUT
+export PKG_NAME
 
 # clean up
 [[ "$IS_TRACE" == "true" ]] || rm -rf ${WORK_DIR} 
